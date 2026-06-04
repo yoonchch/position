@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>길드 자리배치 자동화</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg: #0f1117;
+    --panel: #1a1d27;
+    --panel2: #21253a;
+    --border: #2e3350;
+    --accent: #4f8ef7;
+    --accent2: #7c3aed;
+    --gold: #f5c842;
+    --green: #34d399;
+    --red: #f87171;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --bear1: #4f8ef7;
+    --bear2: #a855f7;
+    --slot-best: rgba(245,200,66,0.18);
+    --slot-good: rgba(52,211,153,0.13);
+    --slot-empty: rgba(255,255,255,0.04);
+    --slot-fixed: rgba(245,200,66,0.28);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── 헤더 */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  header h1 {
+    font-size: 17px; font-weight: 900; letter-spacing: -0.3px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  header h1 span { color: var(--accent); }
+  .credit { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+  /* ── 레이아웃 */
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 0;
+    height: calc(100vh - 53px);
+  }
+
+  /* ── 좌측 패널 */
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1; padding: 10px 0; font-size: 12px; font-weight: 700;
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent; transition: all .2s;
+    font-family: 'Noto Sans KR', sans-serif;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+  .tab-content.active { display: flex; }
+
+  /* 업로드 존 */
+  .upload-zone {
+    margin: 14px; padding: 16px 12px;
+    border: 1.5px dashed var(--border); border-radius: 10px;
+    text-align: center; cursor: pointer;
+    transition: all .2s; background: var(--slot-empty);
+  }
+  .upload-zone:hover { border-color: var(--accent); background: rgba(79,142,247,0.07); }
+  .upload-zone.dragover { border-color: var(--accent); background: rgba(79,142,247,0.12); }
+  .upload-zone input { display: none; }
+  .upload-icon { font-size: 22px; margin-bottom: 4px; }
+  .upload-label { font-size: 12px; font-weight: 700; color: var(--text); }
+  .upload-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* 멤버 리스트 */
+  .member-list {
+    flex: 1; overflow-y: auto; padding: 0 14px 14px;
+  }
+  .member-list::-webkit-scrollbar { width: 4px; }
+  .member-list::-webkit-scrollbar-track { background: transparent; }
+  .member-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .member-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; margin-bottom: 4px;
+    background: var(--slot-empty); border-radius: 7px;
+    border: 1px solid var(--border);
+    cursor: grab; user-select: none;
+    transition: all .15s;
+  }
+  .member-item:hover { border-color: var(--accent); background: rgba(79,142,247,0.08); }
+  .member-item.dragging { opacity: 0.4; }
+  .member-item.placed { opacity: 0.5; border-style: dashed; }
+
+  .member-bear {
+    width: 20px; height: 20px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; flex-shrink: 0;
+  }
+  .bear1-badge { background: rgba(79,142,247,0.25); color: var(--bear1); }
+  .bear2-badge { background: rgba(168,85,247,0.25); color: var(--bear2); }
+  .auto-badge  { background: rgba(100,116,139,0.25); color: var(--muted); }
+
+  .member-name { font-size: 12px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .member-tier { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+
+  /* 로그 패널 */
+  .log-panel {
+    flex: 1; overflow-y: auto; padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    line-height: 1.8; color: var(--muted);
+  }
+  .log-panel::-webkit-scrollbar { width: 4px; }
+  .log-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .log-ok   { color: var(--green); }
+  .log-warn { color: var(--gold); }
+  .log-err  { color: var(--red); }
+  .log-info { color: var(--accent); }
+
+  /* ── 버튼 */
+  .btn-row { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .btn {
+    flex: 1; padding: 9px 0; border-radius: 8px; border: none;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    font-family: 'Noto Sans KR', sans-serif; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #3a7de8; }
+  .btn-primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+  .btn-secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+  .btn-success { background: #065f46; color: var(--green); border: 1px solid #065f46; }
+  .btn-success:hover { background: #047857; }
+  .btn-success:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+  /* ── 우측 그리드 영역 */
+  .grid-area {
+    display: flex; flex-direction: column;
+    background: var(--bg); overflow: hidden;
+  }
+
+  .grid-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    background: var(--panel); flex-wrap: wrap;
+  }
+  .grid-toolbar .label { font-size: 11px; color: var(--muted); font-weight: 700; }
+
+  .legend { display: flex; gap: 10px; margin-left: auto; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 3px;
+  }
+
+  .grid-scroll {
+    flex: 1; overflow: auto; padding: 20px;
+  }
+  .grid-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .grid-scroll::-webkit-scrollbar-track { background: transparent; }
+  .grid-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ── CSS 그리드 */
+  .seat-grid {
+    display: grid;
+    grid-template-columns: repeat(11, 72px);
+    grid-template-rows: repeat(8, 62px);
+    gap: 5px;
+    position: relative;
+  }
+
+  /* 슬롯 공통 */
+  .slot {
+    border-radius: 8px; border: 1.5px solid var(--border);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; text-align: center;
+    position: relative; transition: all .15s;
+    overflow: hidden;
+    padding: 4px 3px;
+  }
+  .slot.empty {
+    background: var(--slot-empty); color: var(--muted);
+    cursor: default;
+  }
+  .slot.droppable {
+    cursor: pointer;
+  }
+  .slot.droppable:hover {
+    border-color: var(--accent); background: rgba(79,142,247,0.1);
+  }
+  .slot.drag-over {
+    border-color: var(--accent) !important;
+    background: rgba(79,142,247,0.2) !important;
+    transform: scale(1.04);
+  }
+  .slot.best  { background: var(--slot-best);  border-color: rgba(245,200,66,0.4); }
+  .slot.good  { background: var(--slot-good);  border-color: rgba(52,211,153,0.3); }
+  .slot.normal{ background: rgba(255,255,255,0.03); }
+  .slot.fixed-slot { background: var(--slot-fixed); border-color: rgba(245,200,66,0.5); }
+
+  .slot-name { line-height: 1.2; word-break: break-all; font-size: 10.5px; }
+  .slot-tier { font-size: 9px; color: var(--muted); font-family: 'JetBrains Mono',monospace; margin-top: 1px; }
+  .slot-bear-dot {
+    position: absolute; top: 3px; right: 3px;
+    width: 6px; height: 6px; border-radius: 50%;
+  }
+  .bear1-dot { background: var(--bear1); }
+  .bear2-dot { background: var(--bear2); }
+
+  .slot-remove {
+    position: absolute; top: 1px; left: 2px;
+    font-size: 9px; color: var(--muted); cursor: pointer;
+    opacity: 0; transition: opacity .15s;
+    line-height: 1;
+  }
+  .slot:hover .slot-remove { opacity: 1; }
+  .slot-remove:hover { color: var(--red) !important; }
+
+  /* 곰덫 */
+  .bear-trap {
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 3px;
+    position: absolute; z-index: 10;
+    font-weight: 900; letter-spacing: 1px;
+    border: 2px solid;
+  }
+  #bear1-trap {
+    /* col 2~3 사이, row 3~5 사이 (G~I, 행9~13) */
+    /* grid col 3~4, row 4~6 (1-indexed) */
+    grid-column: 3 / 5; grid-row: 4 / 6;
+    background: linear-gradient(135deg,rgba(79,142,247,0.15),rgba(79,142,247,0.05));
+    border-color: rgba(79,142,247,0.4);
+    color: var(--bear1); font-size: 11px;
+  }
+  #bear2-trap {
+    /* Q~S, 행9~13 → col 8~9, row 4~6 */
+    grid-column: 8 / 10; grid-row: 4 / 6;
+    background: linear-gradient(135deg,rgba(168,85,247,0.15),rgba(168,85,247,0.05));
+    border-color: rgba(168,85,247,0.4);
+    color: var(--bear2); font-size: 11px;
+  }
+  .bear-icon { font-size: 18px; }
+
+  /* 깃발 표시 (해당 슬롯 위에 오버레이) */
+  .flag-marker {
+    position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; opacity: 0.7; pointer-events: none;
+  }
+
+  /* 통계 바 */
+  .stats-bar {
+    display: flex; gap: 16px; padding: 8px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--panel); font-size: 11px;
+  }
+  .stat { display: flex; align-items: center; gap: 5px; }
+  .stat-val { font-weight: 700; font-family: 'JetBrains Mono',monospace; }
+  .stat-val.b1 { color: var(--bear1); }
+  .stat-val.b2 { color: var(--bear2); }
+  .stat-val.warn { color: var(--gold); }
+
+  /* 모달 */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: none; align-items: center; justify-content: center; z-index: 999;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px; width: 340px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .modal h3 { font-size: 15px; font-weight: 900; margin-bottom: 12px; }
+  .modal p { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+  .modal-btns { display: flex; gap: 8px; }
+  .modal-btns .btn { flex: 1; }
+
+  /* 드래그 고스트 */
+  #drag-ghost {
+    position: fixed; pointer-events: none; z-index: 9999;
+    padding: 6px 10px; background: var(--accent);
+    color: white; border-radius: 6px; font-size: 11px; font-weight: 700;
+    display: none; white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(79,142,247,0.4);
+  }
+
+  /* 빈 슬롯 자리 없음 표시 */
+  .no-slot {
+    grid-column: 1; grid-row: 1;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🏰 길드 <span>자리배치</span> 자동화</h1>
+  <span class="credit">제작자: 윤치치치</span>
+</header>
+
+<div class="layout">
+  <!-- 좌측 패널 -->
+  <aside class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="tab-btn active" onclick="switchTab('members')">멤버 목록</button>
+      <button class="tab-btn" onclick="switchTab('log')">로그</button>
+    </div>
+
+    <!-- 멤버 탭 -->
+    <div class="tab-content active" id="tab-members">
+      <div class="upload-zone" id="member-upload-zone" onclick="document.getElementById('member-file').click()">
+        <input type="file" id="member-file" accept=".xlsx,.xls" onchange="loadMemberFile(this)">
+        <div class="upload-icon">📂</div>
+        <div class="upload-label">멤버 목록 엑셀 업로드</div>
+        <div class="upload-sub">닉네임 · 지심층 · 곰덫 컬럼</div>
+      </div>
+      <div class="upload-zone" id="fixed-upload-zone" onclick="document.getElementById('fixed-file').click()">
+        <input type="file" id="fixed-file" accept=".xlsx,.xls" onchange="loadFixedFile(this)">
+        <div class="upload-icon">📌</div>
+        <div class="upload-label">고정맴버 엑셀 업로드 (선택)</div>
+        <div class="upload-sub">드래그 또는 클릭</div>
+      </div>
+      <div class="member-list" id="member-list"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-assign" onclick="runAssign()" disabled>▶ 자리 배치</button>
+        <button class="btn btn-secondary" onclick="resetAll()">↺ 초기화</button>
+      </div>
+    </div>
+
+    <!-- 로그 탭 -->
+    <div class="tab-content" id="tab-log">
+      <div class="log-panel" id="log-panel"></div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="document.getElementById('log-panel').innerHTML=''">로그 지우기</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 우측 그리드 영역 -->
+  <main class="grid-area">
+    <div class="grid-toolbar">
+      <span class="label">🗺 자리배치 그리드</span>
+      <span style="font-size:11px;color:var(--muted)" id="grid-status">멤버 목록을 업로드하세요</span>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(245,200,66,0.6)"></div>최우선</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(52,211,153,0.5)"></div>중간</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(255,255,255,0.1)"></div>일반</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(245,200,66,0.4);border:1px solid rgba(245,200,66,0.6)"></div>고정</div>
+      </div>
+    </div>
+
+    <div class="grid-scroll">
+      <div class="seat-grid" id="seat-grid">
+        <!-- 곰덫 -->
+        <div class="bear-trap" id="bear1-trap">
+          <span class="bear-icon">🐻</span>
+          <span>곰덫 1</span>
+        </div>
+        <div class="bear-trap" id="bear2-trap">
+          <span class="bear-icon">🐻</span>
+          <span>곰덫 2</span>
+        </div>
+        <!-- 슬롯은 JS로 생성 -->
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat">곰덫1 <span class="stat-val b1" id="stat-b1">0</span>명</div>
+      <div class="stat">곰덫2 <span class="stat-val b2" id="stat-b2">0</span>명</div>
+      <div class="stat">미배치 <span class="stat-val warn" id="stat-un">0</span>명</div>
+      <div class="stat" style="margin-left:auto">
+        <button class="btn btn-success" id="btn-export" onclick="exportExcel()" disabled style="padding:6px 16px">
+          📥 엑셀 추출
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 드래그 고스트 -->
+<div id="drag-ghost"></div>
+
+<!-- 확인 모달 -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3 id="modal-title">확인</h3>
+    <p id="modal-msg"></p>
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" id="modal-ok">확인</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  상수 & 슬롯 데이터
+// ═══════════════════════════════════════════
+const SLOT_DATA = [{"key": "Q3", "col": 7, "row": 0, "excelCol": "Q", "excelRow": 3, "bear": "bear2", "d1": 12.021, "d2": 8.515}, {"key": "S3", "col": 8, "row": 0, "excelCol": "S", "excelRow": 3, "bear": "bear2", "d1": 13.509, "d2": 8.631}, {"key": "U3", "col": 9, "row": 0, "excelCol": "U", "excelRow": 3, "bear": "bear2", "d1": 15.116, "d2": 9.192}, {"key": "W3", "col": 10, "row": 0, "excelCol": "W", "excelRow": 3, "bear": "bear2", "d1": 16.808, "d2": 10.124}, {"key": "C5", "col": 0, "row": 1, "excelCol": "C", "excelRow": 5, "bear": "bear1", "d1": 8.515, "d2": 15.89}, {"key": "E5", "col": 1, "row": 1, "excelCol": "E", "excelRow": 5, "bear": "bear1", "d1": 7.382, "d2": 14.089}, {"key": "G5", "col": 2, "row": 1, "excelCol": "G", "excelRow": 5, "bear": "bear1", "d1": 6.671, "d2": 12.349}, {"key": "I5", "col": 3, "row": 1, "excelCol": "I", "excelRow": 5, "bear": "bear1", "d1": 6.519, "d2": 10.7}, {"key": "K5", "col": 4, "row": 1, "excelCol": "K", "excelRow": 5, "bear": "bear1", "d1": 6.964, "d2": 9.192}, {"key": "M5", "col": 5, "row": 1, "excelCol": "M", "excelRow": 5, "bear": "bear1", "d1": 7.906, "d2": 7.906}, {"key": "O5", "col": 6, "row": 1, "excelCol": "O", "excelRow": 5, "bear": "bear2", "d1": 9.192, "d2": 6.964}, {"key": "Q5", "col": 7, "row": 1, "excelCol": "Q", "excelRow": 5, "bear": "bear2", "d1": 10.7, "d2": 6.519}, {"key": "S5", "col": 8, "row": 1, "excelCol": "S", "excelRow": 5, "bear": "bear2", "d1": 12.349, "d2": 6.671}, {"key": "U5", "col": 9, "row": 1, "excelCol": "U", "excelRow": 5, "bear": "bear2", "d1": 14.089, "d2": 7.382}, {"key": "W5", "col": 10, "row": 1, "excelCol": "W", "excelRow": 5, "bear": "bear2", "d1": 15.89, "d2": 8.515}, {"key": "C7", "col": 0, "row": 2, "excelCol": "C", "excelRow": 7, "bear": "bear1", "d1": 7.106, "d2": 15.182}, {"key": "E7", "col": 1, "row": 2, "excelCol": "E", "excelRow": 7, "bear": "bear1", "d1": 5.701, "d2": 13.285}, {"key": "G7", "col": 2, "row": 2, "excelCol": "G", "excelRow": 7, "bear": "bear1", "d1": 4.743, "d2": 11.424}, {"key": "I7", "col": 3, "row": 2, "excelCol": "I", "excelRow": 7, "bear": "bear1", "d1": 4.528, "d2": 9.618}, {"key": "K7", "col": 4, "row": 2, "excelCol": "K", "excelRow": 7, "bear": "bear1", "d1": 5.148, "d2": 7.906}, {"key": "M7", "col": 5, "row": 2, "excelCol": "M", "excelRow": 7, "bear": "bear1", "d1": 6.364, "d2": 6.364}, {"key": "O7", "col": 6, "row": 2, "excelCol": "O", "excelRow": 7, "bear": "bear2", "d1": 7.906, "d2": 5.148}, {"key": "Q7", "col": 7, "row": 2, "excelCol": "Q", "excelRow": 7, "bear": "bear2", "d1": 9.618, "d2": 4.528}, {"key": "S7", "col": 8, "row": 2, "excelCol": "S", "excelRow": 7, "bear": "bear2", "d1": 11.424, "d2": 4.743}, {"key": "U7", "col": 9, "row": 2, "excelCol": "U", "excelRow": 7, "bear": "bear2", "d1": 13.285, "d2": 5.701}, {"key": "W7", "col": 10, "row": 2, "excelCol": "W", "excelRow": 7, "bear": "bear2", "d1": 15.182, "d2": 7.106}, {"key": "C9", "col": 0, "row": 3, "excelCol": "C", "excelRow": 9, "bear": "bear1", "d1": 6.042, "d2": 14.714}, {"key": "E9", "col": 1, "row": 3, "excelCol": "E", "excelRow": 9, "bear": "bear1", "d1": 4.301, "d2": 12.748}, {"key": "G9", "col": 2, "row": 3, "excelCol": "G", "excelRow": 9, "bear": "bear1", "d1": 2.915, "d2": 10.794}, {"key": "I9", "col": 3, "row": 3, "excelCol": "I", "excelRow": 9, "bear": "bear1", "d1": 2.55, "d2": 8.86}, {"key": "K9", "col": 4, "row": 3, "excelCol": "K", "excelRow": 9, "bear": "bear1", "d1": 3.536, "d2": 6.964}, {"key": "M9", "col": 5, "row": 3, "excelCol": "M", "excelRow": 9, "bear": "bear1", "d1": 5.148, "d2": 5.148}, {"key": "O9", "col": 6, "row": 3, "excelCol": "O", "excelRow": 9, "bear": "bear2", "d1": 6.964, "d2": 3.536}, {"key": "Q9", "col": 7, "row": 3, "excelCol": "Q", "excelRow": 9, "bear": "bear2", "d1": 8.86, "d2": 2.55}, {"key": "S9", "col": 8, "row": 3, "excelCol": "S", "excelRow": 9, "bear": "bear2", "d1": 10.794, "d2": 2.915}, {"key": "U9", "col": 9, "row": 3, "excelCol": "U", "excelRow": 9, "bear": "bear2", "d1": 12.748, "d2": 4.301}, {"key": "W9", "col": 10, "row": 3, "excelCol": "W", "excelRow": 9, "bear": "bear2", "d1": 14.714, "d2": 6.042}, {"key": "C11", "col": 0, "row": 4, "excelCol": "C", "excelRow": 11, "bear": "bear1", "d1": 5.523, "d2": 14.509}, {"key": "E11", "col": 1, "row": 4, "excelCol": "E", "excelRow": 11, "bear": "bear1", "d1": 3.536, "d2": 12.51}, {"key": "K11", "col": 4, "row": 4, "excelCol": "K", "excelRow": 11, "bear": "bear1", "d1": 2.55, "d2": 6.519}, {"key": "M11", "col": 5, "row": 4, "excelCol": "M", "excelRow": 11, "bear": "bear1", "d1": 4.528, "d2": 4.528}, {"key": "O11", "col": 6, "row": 4, "excelCol": "O", "excelRow": 11, "bear": "bear2", "d1": 6.519, "d2": 2.55}, {"key": "U11", "col": 9, "row": 4, "excelCol": "U", "excelRow": 11, "bear": "bear2", "d1": 12.51, "d2": 3.536}, {"key": "W11", "col": 10, "row": 4, "excelCol": "W", "excelRow": 11, "bear": "bear2", "d1": 14.509, "d2": 5.523}, {"key": "C13", "col": 0, "row": 5, "excelCol": "C", "excelRow": 13, "bear": "bear1", "d1": 5.701, "d2": 14.577}, {"key": "E13", "col": 1, "row": 5, "excelCol": "E", "excelRow": 13, "bear": "bear1", "d1": 3.808, "d2": 12.59}, {"key": "K13", "col": 4, "row": 5, "excelCol": "K", "excelRow": 13, "bear": "bear1", "d1": 2.915, "d2": 6.671}, {"key": "M13", "col": 5, "row": 5, "excelCol": "M", "excelRow": 13, "bear": "bear1", "d1": 4.743, "d2": 4.743}, {"key": "O13", "col": 6, "row": 5, "excelCol": "O", "excelRow": 13, "bear": "bear2", "d1": 6.671, "d2": 2.915}, {"key": "U13", "col": 9, "row": 5, "excelCol": "U", "excelRow": 13, "bear": "bear2", "d1": 12.59, "d2": 3.808}, {"key": "W13", "col": 10, "row": 5, "excelCol": "W", "excelRow": 13, "bear": "bear2", "d1": 14.577, "d2": 5.701}, {"key": "C15", "col": 0, "row": 6, "excelCol": "C", "excelRow": 15, "bear": "bear1", "d1": 6.519, "d2": 14.916}, {"key": "E15", "col": 1, "row": 6, "excelCol": "E", "excelRow": 15, "bear": "bear1", "d1": 4.95, "d2": 12.981}, {"key": "G15", "col": 2, "row": 6, "excelCol": "G", "excelRow": 15, "bear": "bear1", "d1": 3.808, "d2": 11.068}, {"key": "I15", "col": 3, "row": 6, "excelCol": "I", "excelRow": 15, "bear": "bear1", "d1": 3.536, "d2": 9.192}, {"key": "K15", "col": 4, "row": 6, "excelCol": "K", "excelRow": 15, "bear": "bear1", "d1": 4.301, "d2": 7.382}, {"key": "M15", "col": 5, "row": 6, "excelCol": "M", "excelRow": 15, "bear": "bear1", "d1": 5.701, "d2": 5.701}, {"key": "O15", "col": 6, "row": 6, "excelCol": "O", "excelRow": 15, "bear": "bear2", "d1": 7.382, "d2": 4.301}, {"key": "Q15", "col": 7, "row": 6, "excelCol": "Q", "excelRow": 15, "bear": "bear2", "d1": 9.192, "d2": 3.536}, {"key": "S15", "col": 8, "row": 6, "excelCol": "S", "excelRow": 15, "bear": "bear2", "d1": 11.068, "d2": 3.808}, {"key": "U15", "col": 9, "row": 6, "excelCol": "U", "excelRow": 15, "bear": "bear2", "d1": 12.981, "d2": 4.95}, {"key": "W15", "col": 10, "row": 6, "excelCol": "W", "excelRow": 15, "bear": "bear2", "d1": 14.916, "d2": 6.519}, {"key": "C17", "col": 0, "row": 7, "excelCol": "C", "excelRow": 17, "bear": "bear1", "d1": 7.778, "d2": 15.508}, {"key": "E17", "col": 1, "row": 7, "excelCol": "E", "excelRow": 17, "bear": "bear1", "d1": 6.519, "d2": 13.657}, {"key": "G17", "col": 2, "row": 7, "excelCol": "G", "excelRow": 17, "bear": "bear1", "d1": 5.701, "d2": 11.853}, {"key": "I17", "col": 3, "row": 7, "excelCol": "I", "excelRow": 17, "bear": "bear1", "d1": 5.523, "d2": 10.124}, {"key": "K17", "col": 4, "row": 7, "excelCol": "K", "excelRow": 17, "bear": "bear1", "d1": 6.042, "d2": 8.515}, {"key": "M17", "col": 5, "row": 7, "excelCol": "M", "excelRow": 17, "bear": "bear1", "d1": 7.106, "d2": 7.106}, {"key": "O17", "col": 6, "row": 7, "excelCol": "O", "excelRow": 17, "bear": "bear2", "d1": 8.515, "d2": 6.042}, {"key": "Q17", "col": 7, "row": 7, "excelCol": "Q", "excelRow": 17, "bear": "bear2", "d1": 10.124, "d2": 5.523}, {"key": "S17", "col": 8, "row": 7, "excelCol": "S", "excelRow": 17, "bear": "bear2", "d1": 11.853, "d2": 5.701}, {"key": "U17", "col": 9, "row": 7, "excelCol": "U", "excelRow": 17, "bear": "bear2", "d1": 13.657, "d2": 6.519}, {"key": "W17", "col": 10, "row": 7, "excelCol": "W", "excelRow": 17, "bear": "bear2", "d1": 15.508, "d2": 7.778}];
+const FIXED_SAMPLE = {"M7": "김병수", "O7": "미아", "M9": "콘", "K11": "마우이", "M11": "겨울", "O11": "루키", "M13": "곰탱", "M15": "푸린"};
+const SKIP_VALUES = new Set(['','깃','🚩깃','곰덫1','곰덫2','범례','최우선','중간','일반','고정','곰덫','none']);
+
+// 슬롯 맵
+const slotMap = {};
+SLOT_DATA.forEach(s => { slotMap[s.key] = s; });
+
+// ═══════════════════════════════════════════
+//  상태
+// ═══════════════════════════════════════════
+let members  = [];   // {name, tier, bear}
+let fixed    = {};   // {slotKey: name}
+let placed   = {};   // {slotKey: {name, tier, bear, isFixed}}
+let dragItem = null; // 현재 드래그 중인 멤버명 or {fromSlot, name}
+
+// ═══════════════════════════════════════════
+//  탭
+// ═══════════════════════════════════════════
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    b.classList.toggle('active', ['members','log'][i] === id);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(`tab-${id}`).classList.add('active');
+}
+
+// ═══════════════════════════════════════════
+//  로그
+// ═══════════════════════════════════════════
+function log(msg, type='') {
+  const el = document.getElementById('log-panel');
+  const line = document.createElement('div');
+  if (type) line.className = `log-${type}`;
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ═══════════════════════════════════════════
+//  파일 로드
+// ═══════════════════════════════════════════
+function loadMemberFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'binary'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      parseMemberRows(rows, file.name);
+    } catch(err) {
+      log(`[오류] 파일 읽기 실패: ${err.message}`, 'err');
+    }
+  };
+  reader.readAsBinaryString(file);
+  document.getElementById('member-upload-zone').querySelector('.upload-label').textContent = `✔ ${file.name}`;
+  document.getElementById('member-upload-zone').style.borderColor = 'var(--green)';
+}
+
+function parseMemberRows(rows, fname) {
+  if (!rows.length) { log('[오류] 빈 파일입니다.', 'err'); return; }
+  const headers = rows[0].map(h => String(h).trim().toLowerCase());
+
+  let nameIdx=-1, tierIdx=-1, bearIdx=-1;
+  headers.forEach((h,i) => {
+    if (['닉네임','이름','닉','name'].some(k => h.includes(k))) nameIdx=i;
+    else if (['지심','층','tier'].some(k => h.includes(k))) tierIdx=i;
+    else if (['곰','bear'].some(k => h.includes(k))) bearIdx=i;
+  });
+
+  const errors = [];
+  if (nameIdx < 0) errors.push("'닉네임' 컬럼 없음");
+  if (tierIdx < 0) errors.push("'지심층' 컬럼 없음");
+  if (errors.length) { errors.forEach(e => log(`[오류] ${e}`, 'err')); return; }
+
+  members = [];
+  let warnCount = 0;
+  for (let i=1; i<rows.length; i++) {
+    const row = rows[i];
+    if (!row.some(v => v !== '')) continue;
+
+    const name = String(row[nameIdx]||'').trim();
+    if (!name) { log(`행${i+1}: 닉네임 없음 → 건너뜀`, 'warn'); warnCount++; continue; }
+
+    let tier = 0;
+    const tierRaw = row[tierIdx];
+    const tierNum = parseFloat(String(tierRaw).replace(/,/g,''));
+    if (!isNaN(tierNum)) tier = Math.floor(tierNum);
+    else { log(`행${i+1} [${name}]: 지심층 '${tierRaw}' 인식 불가 → 0 처리`, 'warn'); warnCount++; }
+
+    let bear = null;
+    const bearRaw = String(bearIdx>=0 ? (row[bearIdx]||'') : '').trim();
+    if (bearRaw.includes('1')) bear = 'bear1';
+    else if (bearRaw.includes('2')) bear = 'bear2';
+    else if (bearRaw && bearRaw.toLowerCase() !== 'none' && bearRaw !== '-') {
+      log(`행${i+1} [${name}]: 곰덫 값 '${bearRaw}' 인식 불가 → 자동배정`, 'warn'); warnCount++;
+    }
+    members.push({name, tier, bear});
+  }
+
+  log(`─`.repeat(30), 'info');
+  log(`✔ [${fname}] ${members.length}명 로드`, 'ok');
+  const b1=members.filter(m=>m.bear==='bear1').length;
+  const b2=members.filter(m=>m.bear==='bear2').length;
+  const un=members.filter(m=>!m.bear).length;
+  log(`  곰1:${b1}  곰2:${b2}  미지정:${un}`, 'info');
+  const tiers = members.map(m=>m.tier);
+  log(`  지심층: ${Math.min(...tiers)} ~ ${Math.max(...tiers)}`, 'info');
+  if (warnCount) log(`  ⚠ 경고 ${warnCount}건 (로그 탭 확인)`, 'warn');
+
+  renderMemberList();
+  document.getElementById('btn-assign').disabled = false;
+  switchTab('members');
+}
+
+function loadFixedFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'binary'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const cells = wb.Sheets[wb.SheetNames[0]];
+      fixed = {};
+      // 셀 직접 순회
+      const range = XLSX.utils.decode_range(ws['!ref']||'A1:A1');
+      for (let R=range.s.r; R<=range.e.r; R++) {
+        for (let C=range.s.c; C<=range.e.c; C++) {
+          const addr = XLSX.utils.encode_cell({r:R,c:C});
+          const cell = ws[addr];
+          if (!cell) continue;
+          const v = String(cell.v||'').trim();
+          if (!v || SKIP_VALUES.has(v.toLowerCase())) continue;
+          // 엑셀 좌표 → 슬롯키
+          const colLetter = XLSX.utils.encode_col(C);
+          const rowNum = R+1;
+          const key = `${colLetter}${rowNum}`;
+          if (slotMap[key]) fixed[key] = v;
+        }
+      }
+      const count = Object.keys(fixed).length;
+      log(`✔ [${file.name}] 고정맴버 ${count}명`, 'ok');
+      Object.entries(fixed).forEach(([k,v]) => log(`  ${k} → ${v}`, 'info'));
+      document.getElementById('fixed-upload-zone').querySelector('.upload-label').textContent = `✔ ${file.name} (${count}명)`;
+      document.getElementById('fixed-upload-zone').style.borderColor = 'var(--gold)';
+    } catch(err) {
+      log(`[오류] 고정맴버 읽기 실패: ${err.message}`, 'err');
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+// ═══════════════════════════════════════════
+//  멤버 목록 렌더
+// ═══════════════════════════════════════════
+function renderMemberList() {
+  const el = document.getElementById('member-list');
+  el.innerHTML = '';
+  members.forEach(m => {
+    const isPlaced = Object.values(placed).some(p => p.name === m.name && !p.isFixed);
+    const div = document.createElement('div');
+    div.className = `member-item${isPlaced ? ' placed' : ''}`;
+    div.dataset.name = m.name;
+    div.draggable = !isPlaced;
+
+    const bearCls = m.bear==='bear1' ? 'bear1-badge' : m.bear==='bear2' ? 'bear2-badge' : 'auto-badge';
+    const bearTxt = m.bear==='bear1' ? '곰1' : m.bear==='bear2' ? '곰2' : '자동';
+    div.innerHTML = `
+      <div class="member-bear ${bearCls}">${bearTxt}</div>
+      <div class="member-name">${m.name}</div>
+      <div class="member-tier">${m.tier}</div>
+    `;
+    div.addEventListener('dragstart', e => {
+      if (isPlaced) { e.preventDefault(); return; }
+      dragItem = {fromSlot: null, name: m.name, tier: m.tier, bear: m.bear};
+      div.classList.add('dragging');
+      showGhost(m.name);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    div.addEventListener('dragend', () => {
+      div.classList.remove('dragging');
+      hideGhost();
+      dragItem = null;
+    });
+    el.appendChild(div);
+  });
+}
+
+// ═══════════════════════════════════════════
+//  자동 배치 알고리즘
+// ═══════════════════════════════════════════
+function runAssign() {
+  if (!members.length) return;
+
+  placed = {};
+
+  // 고정 맴버 먼저 배치
+  const fixedNames = new Set(Object.values(fixed));
+  Object.entries(fixed).forEach(([key, name]) => {
+    placed[key] = {name, tier: null, bear: null, isFixed: true};
+  });
+
+  // 자유 멤버
+  const free = members.filter(m => !fixedNames.has(m.name));
+  const byTier = [...free].sort((a,b) => b.tier - a.tier);
+
+  const avail1 = SLOT_DATA
+    .filter(s => s.bear==='bear1' && !placed[s.key])
+    .sort((a,b) => a.d1 - b.d1);
+  const avail2 = SLOT_DATA
+    .filter(s => s.bear==='bear2' && !placed[s.key])
+    .sort((a,b) => a.d2 - b.d2);
+
+  const m1 = byTier.filter(m => m.bear==='bear1');
+  const m2 = byTier.filter(m => m.bear==='bear2');
+  const un = byTier.filter(m => !m.bear);
+
+  const rem1 = Math.max(0, avail1.length - m1.length);
+  const rem2 = Math.max(0, avail2.length - m2.length);
+  const total = rem1 + rem2;
+  const fill1 = total > 0 ? Math.min(Math.round(un.length * rem1 / total), rem1) : 0;
+
+  const final1 = [...m1, ...un.slice(0, fill1)];
+  const final2 = [...m2, ...un.slice(fill1)];
+
+  const overflow = [];
+  final1.forEach((m,i) => {
+    if (i < avail1.length) placed[avail1[i].key] = {name:m.name, tier:m.tier, bear:'bear1', isFixed:false};
+    else overflow.push(m.name);
+  });
+  final2.forEach((m,i) => {
+    if (i < avail2.length) placed[avail2[i].key] = {name:m.name, tier:m.tier, bear:'bear2', isFixed:false};
+    else overflow.push(m.name);
+  });
+
+  renderGrid();
+  renderMemberList();
+  updateStats();
+
+  log(`─`.repeat(30), 'info');
+  log(`✔ 자리 배치 완료: ${Object.keys(placed).length}명`, 'ok');
+  const pb1 = Object.values(placed).filter(p=>p.bear==='bear1').length;
+  const pb2 = Object.values(placed).filter(p=>p.bear==='bear2').length;
+  log(`  곰1구역:${pb1}  곰2구역:${pb2}  고정:${Object.keys(fixed).length}`, 'info');
+  if (overflow.length) log(`  ⚠ 미배치(슬롯 부족): ${overflow.join(', ')}`, 'warn');
+
+  document.getElementById('btn-export').disabled = false;
+  switchTab('log');
+}
+
+// ═══════════════════════════════════════════
+//  그리드 렌더
+// ═══════════════════════════════════════════
+function renderGrid() {
+  const grid = document.getElementById('seat-grid');
+
+  // 기존 슬롯만 제거 (곰덫은 유지)
+  grid.querySelectorAll('.slot').forEach(el => el.remove());
+
+  SLOT_DATA.forEach(s => {
+    const p = placed[s.key];
+    const slot = document.createElement('div');
+    slot.className = 'slot droppable';
+    slot.dataset.key = s.key;
+    // CSS 그리드 배치 (1-indexed)
+    slot.style.gridColumn = `${s.col+1}`;
+    slot.style.gridRow    = `${s.row+1}`;
+
+    if (p) {
+      const dist = p.bear==='bear1' ? s.d1 : s.d2;
+      const qualCls = dist <= 3.5 ? 'best' : dist <= 6.0 ? 'good' : 'normal';
+      slot.classList.add(p.isFixed ? 'fixed-slot' : qualCls);
+
+      const bearDot = p.bear ? `<div class="slot-bear-dot ${p.bear==='bear1'?'bear1-dot':'bear2-dot'}"></div>` : '';
+      const tierStr = p.tier !== null ? `<div class="slot-tier">${p.tier}층</div>` : '';
+      const removeBtn = !p.isFixed ? `<span class="slot-remove" onclick="removeFromSlot('${s.key}',event)">✕</span>` : '';
+
+      slot.innerHTML = `
+        ${bearDot}
+        ${removeBtn}
+        <div class="slot-name">${p.name}</div>
+        ${tierStr}
+      `;
+      // 드래그로 이동
+      if (!p.isFixed) {
+        slot.draggable = true;
+        slot.addEventListener('dragstart', e => {
+          dragItem = {fromSlot: s.key, name: p.name, tier: p.tier, bear: p.bear};
+          showGhost(p.name);
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        slot.addEventListener('dragend', () => { hideGhost(); dragItem = null; });
+      }
+    } else {
+      slot.classList.add('empty');
+      const dist1 = s.d1, dist2 = s.d2;
+      slot.innerHTML = `<div style="font-size:8px;color:var(--muted);opacity:0.4">${s.bear==='bear1'?dist1.toFixed(1):dist2.toFixed(1)}</div>`;
+    }
+
+    // 드롭 이벤트
+    slot.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (!dragItem) return;
+      const cur = placed[s.key];
+      if (cur && cur.isFixed) return;
+      slot.classList.add('drag-over');
+    });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+    slot.addEventListener('drop', e => {
+      e.preventDefault();
+      slot.classList.remove('drag-over');
+      if (!dragItem) return;
+      const cur = placed[s.key];
+      if (cur && cur.isFixed) return;
+      dropOnSlot(s.key);
+    });
+
+    grid.appendChild(slot);
+  });
+
+  updateStats();
+}
+
+function dropOnSlot(targetKey) {
+  if (!dragItem) return;
+  const {fromSlot, name, tier, bear} = dragItem;
+
+  const prev = placed[targetKey];
+
+  // 타겟 슬롯에 배치
+  placed[targetKey] = {name, tier, bear, isFixed: false};
+
+  if (fromSlot) {
+    // 슬롯→슬롯 이동
+    if (prev && !prev.isFixed) {
+      // 기존 자리에 이전 사람 배치 (swap)
+      placed[fromSlot] = prev;
+    } else {
+      delete placed[fromSlot];
+    }
+  } else {
+    // 목록→슬롯: 이전 자리가 있으면 빈 칸으로
+    if (prev && !prev.isFixed) delete placed[targetKey]; // 잠깐 비우고
+    placed[targetKey] = {name, tier, bear, isFixed: false};
+    // 같은 사람이 다른 슬롯에 있으면 제거
+    Object.keys(placed).forEach(k => {
+      if (k !== targetKey && placed[k].name === name) delete placed[k];
+    });
+  }
+
+  renderGrid();
+  renderMemberList();
+  updateStats();
+}
+
+function removeFromSlot(key, e) {
+  e.stopPropagation();
+  if (placed[key] && !placed[key].isFixed) {
+    delete placed[key];
+    renderGrid();
+    renderMemberList();
+    updateStats();
+  }
+}
+
+// ═══════════════════════════════════════════
+//  통계 업데이트
+// ═══════════════════════════════════════════
+function updateStats() {
+  const vals = Object.values(placed);
+  const b1 = vals.filter(p=>p.bear==='bear1'||p.isFixed&&slotMap[Object.keys(placed).find(k=>placed[k]===p)]?.bear==='bear1').length;
+  const b1c = vals.filter(p=>p.bear==='bear1').length;
+  const b2c = vals.filter(p=>p.bear==='bear2').length;
+  const fixedC = vals.filter(p=>p.isFixed).length;
+  const totalPlaced = vals.length;
+  const totalMembers = members.length + fixedC;
+  const un = members.filter(m => !Object.values(placed).some(p=>p.name===m.name)).length;
+
+  document.getElementById('stat-b1').textContent = b1c;
+  document.getElementById('stat-b2').textContent = b2c;
+  document.getElementById('stat-un').textContent = un;
+  document.getElementById('grid-status').textContent =
+    `총 ${totalPlaced}명 배치됨 (고정 ${fixedC}명 포함)`;
+}
+
+// ═══════════════════════════════════════════
+//  드래그 고스트
+// ═══════════════════════════════════════════
+function showGhost(name) {
+  const g = document.getElementById('drag-ghost');
+  g.textContent = name;
+  g.style.display = 'block';
+}
+function hideGhost() {
+  document.getElementById('drag-ghost').style.display = 'none';
+}
+document.addEventListener('mousemove', e => {
+  const g = document.getElementById('drag-ghost');
+  if (g.style.display === 'block') {
+    g.style.left = (e.clientX + 12) + 'px';
+    g.style.top  = (e.clientY + 8)  + 'px';
+  }
+});
+
+// ═══════════════════════════════════════════
+//  드래그앤드랍 - 업로드 존
+// ═══════════════════════════════════════════
+['member-upload-zone','fixed-upload-zone'].forEach(id => {
+  const zone = document.getElementById(id);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const fakeInput = {files:[file]};
+    if (id === 'member-upload-zone') loadMemberFile(fakeInput);
+    else loadFixedFile(fakeInput);
+  });
+});
+
+// ═══════════════════════════════════════════
+//  엑셀 추출
+// ═══════════════════════════════════════════
+function exportExcel() {
+  if (!Object.keys(placed).length) return;
+
+  // 그리드 크기 계산
+  const maxCol = 24; // X열
+  const maxRow = 18;
+  const data = Array.from({length:maxRow}, () => Array(maxCol).fill(null));
+
+  // 슬롯 이름 채우기
+  Object.entries(placed).forEach(([key, p]) => {
+    const s = slotMap[key];
+    if (!s) return;
+    const colIdx = s.excelCol.charCodeAt(0) - 65; // A=0
+    const rowIdx = s.excelRow - 1;
+    data[rowIdx][colIdx] = p.name;
+  });
+
+  // 곰덫 표시
+  data[10][7]  = '곰덫1'; // H11
+  data[10][16] = '곰덫2'; // Q11
+
+  // 깃발 표시
+  [['G',11],['T',11],['G',14],['J',14],['Q',14],['T',14]].forEach(([c,r]) => {
+    data[r-1][c.charCodeAt(0)-65] = '🚩깃';
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  // 셀 병합 (슬롯 2x2)
+  const merges = SLOT_DATA.map(s => {
+    const c = s.excelCol.charCodeAt(0) - 65;
+    const r = s.excelRow - 1;
+    return {s:{r,c}, e:{r:r+1,c:c+1}};
+  });
+  // 곰덫 병합
+  merges.push({s:{r:10,c:7},e:{r:12,c:9}});   // H11:J13
+  merges.push({s:{r:10,c:16},e:{r:12,c:18}}); // Q11:S13
+  ws['!merges'] = merges;
+
+  // 열 너비
+  ws['!cols'] = Array.from({length:24}, () => ({wch:9}));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '자리배치표');
+
+  const now = new Date();
+  const stamp = `${now.getMonth()+1}${now.getDate()}_${now.getHours()}${String(now.getMinutes()).padStart(2,'0')}`;
+  XLSX.writeFile(wb, `자리배치_${stamp}.xlsx`);
+  log(`✔ 엑셀 추출 완료: 자리배치_${stamp}.xlsx`, 'ok');
+}
+
+// ═══════════════════════════════════════════
+//  초기화
+// ═══════════════════════════════════════════
+function resetAll() {
+  members = [];
+  fixed   = {};
+  placed  = {};
+  document.getElementById('member-list').innerHTML = '';
+  document.getElementById('btn-assign').disabled = true;
+  document.getElementById('btn-export').disabled = true;
+  document.getElementById('grid-status').textContent = '멤버 목록을 업로드하세요';
+  ['member-upload-zone','fixed-upload-zone'].forEach(id => {
+    const z = document.getElementById(id);
+    z.querySelector('.upload-label').textContent =
+      id === 'member-upload-zone' ? '멤버 목록 엑셀 업로드' : '고정맴버 엑셀 업로드 (선택)';
+    z.style.borderColor = '';
+  });
+  renderGrid();
+  updateStats();
+  log('↺ 초기화 완료', 'info');
+}
+
+// ═══════════════════════════════════════════
+//  모달
+// ═══════════════════════════════════════════
+function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+// ═══════════════════════════════════════════
+//  초기 그리드 렌더
+// ═══════════════════════════════════════════
+renderGrid();
+updateStats();
+</script>
+</body>
+</html>
